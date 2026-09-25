@@ -113,10 +113,10 @@
                     android:layout_width="match_parent"
                     android:layout_height="48dp"
                     android:layout_marginTop="6dp"
-                    android:text="Change / Remove password"
+                    android:text="Change or remove password"
                     android:textAllCaps="false"
-                    android:visibility="gone"
-                    style="?android:attr/borderlessButtonStyle" />
+                    android:minHeight="52dp"
+                    android:textSize="15sp" />
 
                 <Button
                     android:id="@+id/password_exit"
