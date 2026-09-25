@@ -332,11 +332,13 @@ class PersistentState(context: Context) : SimpleKrate(context), KoinComponent {
     // make notification persistent (Android 13 and above), default false
     var persistentNotification by booleanPref("persistent_notification").withDefault<Boolean>(false)
 
-    // biometric authentication TODO: remove this
+    // Legacy biometric authentication settings retained for migration compatibility.
     var biometricAuth by booleanPref("biometric_authentication").withDefault<Boolean>(false)
-
-    // bio-metric authentication type
     var biometricAuthType by intPref("biometric_authentication_type").withDefault<Int>(0)
+
+    // Local app-password protection. Only a salted PBKDF2 hash is stored.
+    var appLockPasswordHash by stringPref("app_lock_password_hash").withDefault<String>("")
+    var appLockPasswordSalt by stringPref("app_lock_password_salt").withDefault<String>("")
 
     // enable dns alg
     var enableDnsAlg by booleanPref("dns_alg").withDefault<Boolean>(false)
