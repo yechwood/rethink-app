@@ -1,13 +1,13 @@
 package com.celzero.bravedns.ui.activity
 
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.text.InputType
 import android.view.View
+import android.widget.Button
 import android.widget.EditText
-import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.celzero.bravedns.R
@@ -17,18 +17,30 @@ import com.celzero.bravedns.ui.HomeScreenActivity
 import com.celzero.bravedns.util.Themes
 import com.celzero.bravedns.util.Utilities.isAtleastQ
 import com.celzero.bravedns.util.handleFrostEffectIfNeeded
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 import android.util.Base64
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class AppLockActivity : BaseActivity(R.layout.activity_app_lock) {
     private val persistentState by inject<PersistentState>()
+
+    private lateinit var title: TextView
+    private lateinit var subtitle: TextView
+    private lateinit var password: EditText
+    private lateinit var confirmation: EditText
+    private lateinit var error: TextView
+    private lateinit var primary: Button
+    private lateinit var secondary: Button
+    private lateinit var exit: Button
+
+    private enum class Mode { SETUP, UNLOCK, CHANGE }
+    private var mode = Mode.UNLOCK
 
     companion object {
         const val APP_LOCK_ALIAS = ".ui.activity.LauncherAliasAppLock"
@@ -49,185 +61,197 @@ class AppLockActivity : BaseActivity(R.layout.activity_app_lock) {
                 Themes.isActivityLightTheme(isDarkThemeOn(), persistentState.theme)
             window.isNavigationBarContrastEnforced = false
         }
-        if (persistentState.appLockPasswordHash.isBlank()) showPasswordSetup() else showPasswordPrompt()
+
+        title = findViewById(R.id.password_title)
+        subtitle = findViewById(R.id.password_subtitle)
+        password = findViewById(R.id.password_field)
+        confirmation = findViewById(R.id.password_confirm_field)
+        error = findViewById(R.id.password_error)
+        primary = findViewById(R.id.password_primary)
+        secondary = findViewById(R.id.password_secondary)
+        exit = findViewById(R.id.password_exit)
+
+        exit.setOnClickListener { finishAffinity() }
+        primary.setOnClickListener { handlePrimary() }
+        secondary.setOnClickListener { handleSecondary() }
+
+        if (persistentState.appLockPasswordHash.isBlank()) showSetup() else showUnlock()
     }
 
     override fun onBackPressed() {
-        finishAffinity()
+        if (mode == Mode.CHANGE) showUnlock() else finishAffinity()
     }
 
-    private fun showPasswordSetup() {
-        val first = passwordField("Create password")
-        val confirm = passwordField("Confirm password")
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(8), dp(24), 0)
-            addView(first)
-            addView(confirm)
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Protect Rethink")
-            .setMessage("Create a password to open this app. Use at least $MIN_PASSWORD_LENGTH characters.")
-            .setView(box).setCancelable(false)
-            .setPositiveButton("Save", null)
-            .setNegativeButton("Exit") { _, _ -> finishAffinity() }.create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val password = first.text?.toString() ?: ""
-                val confirmation = confirm.text?.toString() ?: ""
+    private fun showSetup() {
+        mode = Mode.SETUP
+        title.text = "Protect Rethink"
+        subtitle.text = "Create a password to keep Rethink private. Use at least $MIN_PASSWORD_LENGTH characters."
+        password.hint = "Create password"
+        confirmation.hint = "Confirm password"
+        confirmation.visibility = View.VISIBLE
+        secondary.visibility = View.GONE
+        primary.text = "Create password"
+        exit.text = "Exit"
+        password.setText("")
+        confirmation.setText("")
+        clearError()
+        password.requestFocus()
+    }
+
+    private fun showUnlock() {
+        mode = Mode.UNLOCK
+        title.text = "Welcome back"
+        subtitle.text = "Rethink is locked. Enter your password to continue."
+        password.hint = "Password"
+        confirmation.visibility = View.GONE
+        secondary.visibility = View.VISIBLE
+        secondary.text = "Change / Remove password"
+        primary.text = "Unlock"
+        exit.text = "Exit"
+        password.setText("")
+        clearError()
+        password.requestFocus()
+    }
+
+    private fun showChange() {
+        mode = Mode.CHANGE
+        title.text = "Change password"
+        subtitle.text = "Choose a new password, or remove protection from this device."
+        password.hint = "New password"
+        confirmation.hint = "Confirm new password"
+        confirmation.visibility = View.VISIBLE
+        secondary.visibility = View.VISIBLE
+        secondary.text = "Remove password"
+        primary.text = "Save password"
+        exit.text = "Cancel"
+        password.setText("")
+        confirmation.setText("")
+        clearError()
+        password.requestFocus()
+    }
+
+    private fun handlePrimary() {
+        val value = password.text?.toString() ?: ""
+        when (mode) {
+            Mode.SETUP -> {
+                val confirm = confirmation.text?.toString() ?: ""
                 when {
-                    password.length < MIN_PASSWORD_LENGTH -> first.error = "Password is too short"
-                    password != confirmation -> confirm.error = "Passwords do not match"
-                    else -> { savePassword(password); dialog.dismiss(); startHomeActivity() }
-                }
-            }
-            first.requestFocus()
-        }
-        dialog.show()
-    }
-
-    private fun showPasswordPrompt() {
-        val field = passwordField("Password")
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(8), dp(24), 0)
-            addView(field)
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Rethink is locked")
-            .setMessage("Enter your password to continue.")
-            .setView(box).setCancelable(false)
-            .setPositiveButton("Unlock", null)
-            .setNeutralButton("Change / Remove", null)
-            .setNegativeButton("Exit") { _, _ -> finishAffinity() }.create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val password = field.text?.toString() ?: ""
-                if (password.isBlank()) {
-                    field.error = "Enter your password"
-                    return@setOnClickListener
-                }
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
-                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).isEnabled = false
-                verifyPasswordAsync(password) { valid ->
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
-                    dialog.getButton(AlertDialog.BUTTON_NEUTRAL).isEnabled = true
-                    if (valid) {
-                        dialog.dismiss()
-                        startHomeActivity()
-                    } else {
-                        field.text?.clear()
-                        field.error = "Incorrect password"
-                    }
-                }
-            }
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                val password = field.text?.toString() ?: ""
-                if (password.isBlank()) {
-                    field.error = "Enter your current password"
-                    return@setOnClickListener
-                }
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
-                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).isEnabled = false
-                verifyPasswordAsync(password) { valid ->
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
-                    dialog.getButton(AlertDialog.BUTTON_NEUTRAL).isEnabled = true
-                    if (valid) {
-                        dialog.dismiss()
-                        showChangeOrRemovePassword()
-                    } else {
-                        field.text?.clear()
-                        field.error = "Incorrect password"
-                    }
-                }
-            }
-            field.requestFocus()
-        }
-        dialog.show()
-    }
-
-    private fun passwordField(hint: String): EditText = EditText(this).apply {
-        this.hint = hint
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        isSingleLine = true
-        importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-    }
-
-    private fun showChangeOrRemovePassword() {
-        val newPassword = passwordField("New password (leave blank to remove)")
-        val confirm = passwordField("Confirm new password")
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(8), dp(24), 0)
-            addView(newPassword)
-            addView(confirm)
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Change or remove password")
-            .setMessage("Enter a new password, or leave it blank to remove app protection.")
-            .setView(box).setCancelable(false)
-            .setPositiveButton("Save", null)
-            .setNegativeButton("Cancel", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val password = newPassword.text?.toString() ?: ""
-                val confirmation = confirm.text?.toString() ?: ""
-                when {
-                    password.isBlank() -> {
-                        persistentState.appLockPasswordHash = ""
-                        persistentState.appLockPasswordSalt = ""
-                        dialog.dismiss()
-                        startHomeActivity()
-                    }
-                    password.length < MIN_PASSWORD_LENGTH -> newPassword.error = "Password is too short"
-                    password != confirmation -> confirm.error = "Passwords do not match"
+                    value.length < MIN_PASSWORD_LENGTH -> showError("Password must be at least $MIN_PASSWORD_LENGTH characters.")
+                    value != confirm -> showError("Passwords do not match.")
                     else -> {
-                        savePassword(password)
-                        dialog.dismiss()
+                        savePassword(value)
                         startHomeActivity()
                     }
                 }
             }
-            newPassword.requestFocus()
+            Mode.UNLOCK -> {
+                if (value.isBlank()) {
+                    showError("Enter your password.")
+                    return
+                }
+                setBusy(true)
+                verifyPasswordAsync(value) { valid ->
+                    setBusy(false)
+                    if (valid) startHomeActivity() else {
+                        password.setText("")
+                        showError("Incorrect password. Try again.")
+                    }
+                }
+            }
+            Mode.CHANGE -> {
+                val confirm = confirmation.text?.toString() ?: ""
+                when {
+                    value.length < MIN_PASSWORD_LENGTH -> showError("Password must be at least $MIN_PASSWORD_LENGTH characters.")
+                    value != confirm -> showError("Passwords do not match.")
+                    else -> {
+                        savePassword(value)
+                        startHomeActivity()
+                    }
+                }
+            }
         }
-        dialog.show()
     }
 
-    private fun savePassword(password: String) {
+    private fun handleSecondary() {
+        if (mode == Mode.UNLOCK) {
+            val current = password.text?.toString() ?: ""
+            if (current.isBlank()) {
+                showError("Enter your current password first.")
+                return
+            }
+            setBusy(true)
+            verifyPasswordAsync(current) { valid ->
+                setBusy(false)
+                if (valid) showChange() else {
+                    password.setText("")
+                    showError("Incorrect password. Try again.")
+                }
+            }
+        } else if (mode == Mode.CHANGE) {
+            persistentState.appLockPasswordHash = ""
+            persistentState.appLockPasswordSalt = ""
+            startHomeActivity()
+        }
+    }
+
+    private fun setBusy(busy: Boolean) {
+        primary.isEnabled = !busy
+        secondary.isEnabled = !busy
+        exit.isEnabled = !busy
+        primary.text = if (busy) "Checking…" else when (mode) {
+            Mode.SETUP -> "Create password"
+            Mode.UNLOCK -> "Unlock"
+            Mode.CHANGE -> "Save password"
+        }
+    }
+
+    private fun showError(message: String) {
+        error.text = message
+        error.visibility = View.VISIBLE
+    }
+
+    private fun clearError() {
+        error.text = ""
+        error.visibility = View.GONE
+    }
+
+    private fun savePassword(value: String) {
         val salt = ByteArray(SALT_BYTES)
         SecureRandom().nextBytes(salt)
         persistentState.appLockPasswordSalt = Base64.encodeToString(salt, Base64.NO_WRAP)
-        persistentState.appLockPasswordHash = hashPassword(password, salt, HASH_ITERATIONS)
+        persistentState.appLockPasswordHash = hashPassword(value, salt, HASH_ITERATIONS)
     }
 
-    private fun verifyPasswordAsync(password: String, result: (Boolean) -> Unit) {
+    private fun verifyPasswordAsync(value: String, result: (Boolean) -> Unit) {
         lifecycleScope.launch(Dispatchers.Default) {
-            val valid = verifyPassword(password)
+            val valid = verifyPassword(value)
             withContext(Dispatchers.Main) { result(valid) }
         }
     }
 
-    private fun verifyPassword(password: String): Boolean = try {
+    private fun verifyPassword(value: String): Boolean = try {
         val salt = Base64.decode(persistentState.appLockPasswordSalt, Base64.NO_WRAP)
         val expected = Base64.decode(persistentState.appLockPasswordHash, Base64.NO_WRAP)
-        val current = Base64.decode(hashPassword(password, salt, HASH_ITERATIONS), Base64.NO_WRAP)
-        val valid = MessageDigest.isEqual(expected, current)
-        if (valid) true
+        val current = Base64.decode(hashPassword(value, salt, HASH_ITERATIONS), Base64.NO_WRAP)
+        if (MessageDigest.isEqual(expected, current)) true
         else {
-            val legacy = Base64.decode(hashPassword(password, salt, LEGACY_HASH_ITERATIONS), Base64.NO_WRAP)
+            val legacy = Base64.decode(hashPassword(value, salt, LEGACY_HASH_ITERATIONS), Base64.NO_WRAP)
             MessageDigest.isEqual(expected, legacy)
         }
-    } catch (_: Exception) { false }
+    } catch (_: Exception) {
+        false
+    }
 
-    private fun hashPassword(password: String, salt: ByteArray, iterations: Int): String {
-        val spec = PBEKeySpec(password.toCharArray(), salt, iterations, HASH_LENGTH_BITS)
+    private fun hashPassword(value: String, salt: ByteArray, iterations: Int): String {
+        val spec = PBEKeySpec(value.toCharArray(), salt, iterations, HASH_LENGTH_BITS)
         return try {
             Base64.encodeToString(
                 SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded,
                 Base64.NO_WRAP
             )
-        } finally { spec.clearPassword() }
+        } finally {
+            spec.clearPassword()
+        }
     }
 
     private fun startHomeActivity() {
@@ -240,6 +264,4 @@ class AppLockActivity : BaseActivity(R.layout.activity_app_lock) {
 
     private fun isDarkThemeOn(): Boolean =
         resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
