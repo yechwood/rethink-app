@@ -1319,7 +1319,7 @@ class MiscSettingsActivity : BaseActivity(R.layout.activity_misc_settings) {
         }
 
         try {
-            notificationPermissionResult.launch(Manifest.permission.POST_NOTIFICATIONS)
+            
         } catch (e: ActivityNotFoundException) {
             Logger.e(
                 LOG_TAG_VPN,
