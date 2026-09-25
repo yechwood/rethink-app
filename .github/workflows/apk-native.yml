@@ -1,0 +1,35 @@
+name: APK Build Native
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source without an Action
+        run: |
+          git clone --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
+          cd src
+          git checkout "${GITHUB_SHA}"
+
+      - name: Build APK
+        run: |
+          cd src
+          chmod +x gradlew
+          ./gradlew assembleFdroidFullDebug --stacktrace --warning-mode all
+          APK="$(find app/build/outputs/apk -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          cp "$APK" "$GITHUB_WORKSPACE/rethink-app-debug.apk"
+
+      - name: Publish APK as GitHub release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="apk-${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" "$GITHUB_WORKSPACE/rethink-app-debug.apk"             --repo "${GITHUB_REPOSITORY}"             --title "Rethink APK build ${GITHUB_RUN_NUMBER}"             --notes "Automated APK build from ${GITHUB_SHA}."
