@@ -757,15 +757,14 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
         cm =
             this.getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
 
+        notificationManager.cancelAll()
         ensureNotificationChannelExists()
 
         if (persistentState.getBlockAppWhenBackground()) {
             registerAccessibilityServiceState()
         }
         registerUserPresentReceiver()
-        if (isAtleastQ()) {
-            handleFirewallBubbleIfNeeded()
-        }
+        // Notification bubbles are disabled in this fork.
     }
 
     private fun registerUserPresentReceiver() {
@@ -860,9 +859,12 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
         if (!isAtleastO()) return
         val name: CharSequence = resources.getString(R.string.notif_channel_vpn_notification)
         // LOW is the lowest importance that is allowed with startForeground in Android O
-        val importance = NotificationManager.IMPORTANCE_LOW
+        val importance = NotificationManager.IMPORTANCE_MIN
         val channel = NotificationChannel(MAIN_CHANNEL_ID, name, importance)
-        channel.description = resources.getString(R.string.notif_channel_desc_vpn_notification)
+        channel.description = "Silent foreground service channel"
+        channel.setShowBadge(false)
+        channel.setSound(null, null)
+        channel.enableVibration(false)
         notificationManager.createNotificationChannel(channel)
     }
 
@@ -896,23 +898,22 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
         if (isAppPaused()) {
             contentTitle = resources.getString(R.string.pause_mode_notification_title)
         }
-        builder.setSmallIcon(R.drawable.ic_notification_icon).setContentIntent(pendingIntent)
-        builder.setContentTitle(contentTitle)
+        builder.setSmallIcon(R.drawable.ic_notification_icon)
+        builder.setContentTitle("")
+        builder.setContentText("")
+        builder.setShowWhen(false)
+        builder.setSilent(true)
         builder.color = ContextCompat.getColor(this, getAccentColor(persistentState.theme))
+        if (VERSION.SDK_INT >= VERSION_CODES.S) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_DEFERRED)
+        }
 
         // New action button options in the notification
         // 1. Pause / Resume, Stop action button.
         // 2. RethinkDNS modes (dns & dns+firewall mode)
         // 3. No action button.
         // do not show notification action when app lock is enabled
-        val notifActionType =
-            if (isAppLockEnabled()) {
-                NotificationActionType.NONE
-            } else {
-                NotificationActionType.getNotificationActionType(
-                    persistentState.notificationActionType
-                )
-            }
+        val notifActionType = NotificationActionType.NONE
         logd(
             "notification action type: ${persistentState.notificationActionType}, $notifActionType"
         )
@@ -1089,7 +1090,7 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
         // Cancel the notification after clicking.
         builder.setAutoCancel(true)
 
-        notificationManager.notify(
+        postSuppressedNotification(
             NOTIF_CHANNEL_ID_FIREWALL_ALERTS,
             NOTIF_ID_ACCESSIBILITY_FAILURE,
             builder.build()
@@ -1508,7 +1509,7 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
                     setTunMode()
                     updateDnsAlg()
                 }
-                notificationManager.notify(SERVICE_ID, updateNotificationBuilder())
+                postSuppressedNotification(SERVICE_ID, updateNotificationBuilder())
             }
 
             PersistentState.LOCAL_BLOCK_LIST -> {
@@ -1593,7 +1594,7 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
                 io("proxy") {
                     handleProxyChange()
                 }
-                notificationManager.notify(SERVICE_ID, updateNotificationBuilder())
+                postSuppressedNotification(SERVICE_ID, updateNotificationBuilder())
             }
 
             PersistentState.NETWORK -> {
@@ -1602,12 +1603,12 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
             }
 
             PersistentState.NOTIFICATION_ACTION -> {
-                notificationManager.notify(SERVICE_ID, updateNotificationBuilder())
+                postSuppressedNotification(SERVICE_ID, updateNotificationBuilder())
             }
 
             PersistentState.BIOMETRIC_AUTH -> {
                 // update the notification builder to show the action buttons based on the biometric
-                notificationManager.notify(SERVICE_ID, updateNotificationBuilder())
+                postSuppressedNotification(SERVICE_ID, updateNotificationBuilder())
             }
 
             PersistentState.INTERNET_PROTOCOL -> {
@@ -1672,7 +1673,7 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
             PersistentState.NOTIFICATION_PERMISSION -> {
                 if (persistentState.shouldRequestNotificationPermission) {
                     Logger.i(LOG_TAG_VPN, "notification permission allowed, show notification")
-                    notificationManager.notify(SERVICE_ID, updateNotificationBuilder())
+                    postSuppressedNotification(SERVICE_ID, updateNotificationBuilder())
                 } else {
                     // no-op
                 }
@@ -2889,7 +2890,7 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
                 .setContentIntent(pendingIntent)
                 // Open the main UI if possible.
                 .setAutoCancel(true)
-            notificationManager.notify(0, builder.build())
+            postSuppressedNotification(0, builder.build())
         }
     }
 
@@ -2966,7 +2967,7 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
             builder.color = ContextCompat.getColor(this, getAccentColor(persistentState.theme))
-            notificationManager.notify(IP_MISMATCH_NOTIFICATION_ID, builder.build())
+            postSuppressedNotification(IP_MISMATCH_NOTIFICATION_ID, builder.build())
         }
     }
 
@@ -3093,7 +3094,7 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
     private fun handleVpnServiceOnAppStateChange() { // paused or resumed
         val reason = if (isAppPaused()) "pause" else "resume"
         vpnRestartTrigger.value = reason
-        ui { notificationManager.notify(SERVICE_ID, updateNotificationBuilder()) }
+        ui { postSuppressedNotification(SERVICE_ID, updateNotificationBuilder()) }
     }
 
     // The VPN service and tun2socks must agree on the layout of the network.  By convention, we
@@ -4246,7 +4247,7 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
         builder.color = ContextCompat.getColor(this, getAccentColor(persistentState.theme))
         val notificationManager =
             getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(MEMORY_NOTIFICATION_ID, builder.build())
+        postSuppressedNotification(MEMORY_NOTIFICATION_ID, builder.build())
     }
 
     override fun onRevoke() {
@@ -4777,4 +4778,10 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
         lastBlockedCount = -1
         Logger.i(TAG, "Bubble observer removed")
     }
+    // Suppress all ordinary app notification posts. Android still requires a Notification
+    // object for a foreground service, so startForeground() supplies the minimal silent one.
+    private fun postSuppressedNotification(vararg ignored: Any?) {
+        // Intentionally empty.
+    }
+
 }
