@@ -123,19 +123,29 @@ class BraveTileService : TileService(), KoinComponent {
 
     override fun onClick() {
         super.onClick()
-        // do not start or stop VPN if app lock is enabled
-        if (VpnController.state().activationRequested && !isAppLockEnabled()) {
+
+        // A normal tap is a direct VPN toggle. App-lock settings should not turn a
+        // Quick Settings tap into an app launch; Android itself handles the tile's
+        // long-press/details interaction.
+        val active = VpnController.state().activationRequested
+        if (active) {
             if (VpnController.isAlwaysOn(this)) {
-                Logger.i(Logger.LOG_TAG_VPN, "Tile: vpn is always-on, opening app instead of stop")
-                openApp()
+                // Android may immediately restart an Always-on VPN after stop. Keep
+                // the tile tap in-place and let the user know why it cannot stay off.
+                Logger.i(Logger.LOG_TAG_VPN, "Tile: VPN is Always-on; Android controls reconnection")
+                android.widget.Toast.makeText(
+                    this,
+                    "VPN is set to Always-on in Android settings",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             } else {
                 VpnController.stop("tile", this)
             }
-        } else if (isVpnPrepared() && !isAppLockEnabled()) {
-            // Start VPN service when VPN permission has been granted
+        } else if (isVpnPrepared()) {
             VpnController.start(this)
         } else {
-            // open the app to handle the VPN start or stop
+            // The first start requires Android's VPN consent screen; the app must
+            // be brought forward for that one-time system authorization.
             openApp()
         }
     }
