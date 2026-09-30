@@ -232,7 +232,7 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
         const val NW_ENGINE_NOTIFICATION_ID = 29002
         const val IP_MISMATCH_NOTIFICATION_ID = 29003
 
-        private const val MAIN_CHANNEL_ID = "vpn"
+        private const val MAIN_CHANNEL_ID = "vpn_notifications_disabled"
         private const val WARNING_CHANNEL_ID = "warning"
 
         // notification request codes
@@ -858,8 +858,9 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
     private fun ensureNotificationChannelExists() {
         if (!isAtleastO()) return
         val name: CharSequence = resources.getString(R.string.notif_channel_vpn_notification)
-        // LOW is the lowest importance that is allowed with startForeground in Android O
-        val importance = NotificationManager.IMPORTANCE_MIN
+        // Keep the required foreground-service notification channel fully blocked.
+        // Use a new channel ID so devices do not retain the old channel's importance.
+        val importance = NotificationManager.IMPORTANCE_NONE
         val channel = NotificationChannel(MAIN_CHANNEL_ID, name, importance)
         channel.description = "Silent foreground service channel"
         channel.setShowBadge(false)
@@ -4670,23 +4671,9 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
 
     @RequiresApi(VERSION_CODES.Q)
     private fun handleFirewallBubbleIfNeeded() {
-        if (!persistentState.firewallBubbleEnabled) {
-            Logger.w(TAG, "Bubble disabled by user")
-            unobserveBubbleBlockedConns()
-            BubbleHelper.dismissBubble(this)
-            return
-        }
-
-        // A notification (and therefore a bubble) cannot be shown without the
-        // POST_NOTIFICATIONS permission on Android 13+. Treat it the same as disabled.
-        if (!BubbleHelper.isNotificationPermissionGranted(this)) {
-            Logger.w(TAG, "Notification permission not granted; not showing bubble")
-            unobserveBubbleBlockedConns()
-            BubbleHelper.dismissBubble(this)
-            return
-        }
-
-        initializeBubble()
+        // This fork must not create notification-backed bubbles.
+        unobserveBubbleBlockedConns()
+        BubbleHelper.dismissBubble(this)
     }
 
     private fun unobserveBubbleBlockedConns() {
