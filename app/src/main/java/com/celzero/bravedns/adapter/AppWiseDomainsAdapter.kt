@@ -28,6 +28,7 @@ import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.paging.PagingDataAdapter
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
@@ -50,6 +51,8 @@ import com.celzero.bravedns.util.Utilities
 import com.celzero.bravedns.util.Utilities.removeBeginningTrailingCommas
 import com.celzero.bravedns.util.Utilities.showToastUiCentered
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlin.math.log2
 
 class AppWiseDomainsAdapter(
@@ -305,8 +308,115 @@ class AppWiseDomainsAdapter(
                     showCloseConnectionDialog(conn)
                     return@setOnClickListener
                 }
-                // open bottom sheet to apply domain/ip rules
+                // A normal tap retains the existing per-domain rule editor.
                 openBottomSheet(conn)
+            }
+            b.acdContainer.setOnLongClickListener {
+                if (!isActiveConn) {
+                    showBulkDomainRulesDialog()
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        /**
+         * Long-press any domain row to batch-trust or batch-block the domains
+         * visible in this app's loaded connection history. The "trust all" action
+         * applies only to domains actually discovered in the loaded history; it
+         * cannot infer hidden, encrypted, IP-only, or future dependencies.
+         */
+        private fun showBulkDomainRulesDialog() {
+            val discovered = snapshot().items
+                .asSequence()
+                .flatMap { it.appOrDnsName.orEmpty().split(",").asSequence() }
+                .map { it.trim().trimEnd('.') }
+                .filter { it.isNotBlank() && DomainRulesManager.isValidDomain(it) }
+                .distinct()
+                .take(200)
+                .toList()
+
+            if (discovered.isEmpty()) {
+                showToastUiCentered(context, "No domains available in the loaded history", Toast.LENGTH_LONG)
+                return
+            }
+
+            val selected = BooleanArray(discovered.size) { false }
+            val labels = discovered.toTypedArray()
+            val dialog = MaterialAlertDialogBuilder(context)
+                .setTitle("Manage multiple domains")
+                .setMessage("Long-press opens this list. Select domains, then trust or block them. Trust all discovered applies to the domains listed here only.")
+                .setMultiChoiceItems(labels, selected) { _, which, checked ->
+                    selected[which] = checked
+                }
+                .setPositiveButton("Trust selected", null)
+                .setNegativeButton("Block selected", null)
+                .setNeutralButton("Trust all discovered", null)
+                .create()
+
+            dialog.setOnShowListener {
+                dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    val chosen = discovered.filterIndexed { index, _ -> selected[index] }
+                    if (chosen.isEmpty()) {
+                        showToastUiCentered(context, "Select at least one domain", Toast.LENGTH_SHORT)
+                    } else {
+                        applyBulkDomainRule(chosen, DomainRulesManager.Status.TRUST)
+                        dialog.dismiss()
+                    }
+                }
+                dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                    val chosen = discovered.filterIndexed { index, _ -> selected[index] }
+                    if (chosen.isEmpty()) {
+                        showToastUiCentered(context, "Select at least one domain", Toast.LENGTH_SHORT)
+                    } else {
+                        applyBulkDomainRule(chosen, DomainRulesManager.Status.BLOCK)
+                        dialog.dismiss()
+                    }
+                }
+                dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                    MaterialAlertDialogBuilder(context)
+                        .setTitle("Trust all discovered domains?")
+                        .setMessage("This adds allow rules for all ${discovered.size} valid domains currently loaded from this app's connection history. Some app dependencies may not have appeared yet.")
+                        .setNegativeButton(R.string.lbl_cancel, null)
+                        .setPositiveButton("Trust domains") { _, _ ->
+                            applyBulkDomainRule(discovered, DomainRulesManager.Status.TRUST)
+                        }
+                        .show()
+                    dialog.dismiss()
+                }
+            }
+            dialog.show()
+        }
+
+        private fun applyBulkDomainRule(
+            domains: List<String>,
+            status: DomainRulesManager.Status
+        ) {
+            lifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                var applied = 0
+                domains.forEach { domain ->
+                    try {
+                        DomainRulesManager.changeStatus(
+                            domain,
+                            uid,
+                            "",
+                            DomainRulesManager.DomainType.DOMAIN,
+                            status
+                        )
+                        applied++
+                    } catch (e: Exception) {
+                        Logger.e(LOG_TAG_UI, "$TAG bulk domain rule failed for $domain: ${e.message}", e)
+                    }
+                }
+                launch(Dispatchers.Main) {
+                    showToastUiCentered(
+                        context,
+                        "$status rule applied to $applied domain(s)",
+                        Toast.LENGTH_LONG
+                    )
+                    refresh()
+                }
             }
         }
 
