@@ -68,6 +68,8 @@ class AppWiseDomainsAdapter(
 
     private var maxValue: Int = 0
     private var minPercentage: Int = INITIAL_MIN_PERCENTAGE
+    private val selectedDomains = linkedSetOf<String>()
+    private var selectionMode = false
 
     companion object {
         private val DIFF_CALLBACK =
@@ -137,6 +139,7 @@ class AppWiseDomainsAdapter(
         RecyclerView.ViewHolder(b.root) {
         fun update(conn: AppConnection) {
             displayTransactionDetails(conn)
+            updateSelectionUi(conn)
             setupClickListeners(conn)
         }
 
@@ -308,113 +311,93 @@ class AppWiseDomainsAdapter(
                     showCloseConnectionDialog(conn)
                     return@setOnClickListener
                 }
-                // A normal tap retains the existing per-domain rule editor.
-                openBottomSheet(conn)
+                if (selectionMode) toggleSelection(conn) else openBottomSheet(conn)
             }
             b.acdContainer.setOnLongClickListener {
                 if (!isActiveConn) {
-                    showBulkDomainRulesDialog()
+                    selectionMode = true
+                    toggleSelection(conn)
                     true
-                } else {
-                    false
+                } else false
+            }
+            b.acdSelectCb.setOnClickListener {
+                if (!isActiveConn) {
+                    if (!selectionMode) selectionMode = true
+                    toggleSelection(conn)
                 }
             }
         }
 
-        /**
-         * Long-press any domain row to batch-trust or batch-block the domains
-         * visible in this app's loaded connection history. The "trust all" action
-         * applies only to domains actually discovered in the loaded history; it
-         * cannot infer hidden, encrypted, IP-only, or future dependencies.
-         */
-        private fun showBulkDomainRulesDialog() {
-            val discovered = snapshot().items
-                .asSequence()
-                .flatMap { it.appOrDnsName.orEmpty().split(",").asSequence() }
-                .map { it.trim().trimEnd('.') }
-                .filter { it.isNotBlank() && DomainRulesManager.isValidDomain(it) }
-                .distinct()
-                .take(200)
-                .toList()
-
-            if (discovered.isEmpty()) {
-                showToastUiCentered(context, "No domains available in the loaded history", Toast.LENGTH_LONG)
+        private fun updateSelectionUi(conn: AppConnection) {
+            if (isActiveConn) {
+                b.acdSelectCb.visibility = View.GONE
                 return
             }
-
-            val selected = BooleanArray(discovered.size) { false }
-            val labels = discovered.toTypedArray()
-            val dialog = MaterialAlertDialogBuilder(context)
-                .setTitle("Manage multiple domains")
-                .setMessage("Long-press opens this list. Select domains, then trust or block them. Trust all discovered applies to the domains listed here only.")
-                .setMultiChoiceItems(labels, selected) { _, which, checked ->
-                    selected[which] = checked
-                }
-                .setPositiveButton("Trust selected", null)
-                .setNegativeButton("Block selected", null)
-                .setNeutralButton("Trust all discovered", null)
-                .create()
-
-            dialog.setOnShowListener {
-                dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                    val chosen = discovered.filterIndexed { index, _ -> selected[index] }
-                    if (chosen.isEmpty()) {
-                        showToastUiCentered(context, "Select at least one domain", Toast.LENGTH_SHORT)
-                    } else {
-                        applyBulkDomainRule(chosen, DomainRulesManager.Status.TRUST)
-                        dialog.dismiss()
-                    }
-                }
-                dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
-                    val chosen = discovered.filterIndexed { index, _ -> selected[index] }
-                    if (chosen.isEmpty()) {
-                        showToastUiCentered(context, "Select at least one domain", Toast.LENGTH_SHORT)
-                    } else {
-                        applyBulkDomainRule(chosen, DomainRulesManager.Status.BLOCK)
-                        dialog.dismiss()
-                    }
-                }
-                dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                    MaterialAlertDialogBuilder(context)
-                        .setTitle("Trust all discovered domains?")
-                        .setMessage("This adds allow rules for all ${discovered.size} valid domains currently loaded from this app's connection history. Some app dependencies may not have appeared yet.")
-                        .setNegativeButton(R.string.lbl_cancel, null)
-                        .setPositiveButton("Trust domains") { _, _ ->
-                            applyBulkDomainRule(discovered, DomainRulesManager.Status.TRUST)
-                        }
-                        .show()
-                    dialog.dismiss()
-                }
-            }
-            dialog.show()
+            val key = selectionKey(conn)
+            b.acdSelectCb.visibility = if (selectionMode) View.VISIBLE else View.GONE
+            b.acdSelectCb.isChecked = selectedDomains.contains(key)
+            b.acdDownArrowIv.visibility = if (selectionMode) View.GONE else View.VISIBLE
+            b.acdContainer.alpha = if (selectionMode && selectedDomains.contains(key)) 0.82f else 1f
         }
 
-        private fun applyBulkDomainRule(
-            domains: List<String>,
-            status: DomainRulesManager.Status
-        ) {
+        private fun selectionKey(conn: AppConnection): String {
+            return "${conn.uid}|${conn.ipAddress}|${conn.appOrDnsName.orEmpty()}"
+        }
+
+        private fun toggleSelection(conn: AppConnection) {
+            val key = selectionKey(conn)
+            if (selectedDomains.contains(key)) selectedDomains.remove(key) else selectedDomains.add(key)
+            if (selectedDomains.isEmpty()) selectionMode = false
+            val position = bindingAdapterPosition
+            if (position != RecyclerView.NO_POSITION) notifyItemChanged(position)
+            if (selectedDomains.isNotEmpty()) showSelectionActionIfNeeded()
+        }
+
+        private fun showSelectionActionIfNeeded() {
+            val selectedConnections = snapshot().items.filter { selectedDomains.contains(selectionKey(it)) }
+            if (selectedConnections.isEmpty()) return
+            MaterialAlertDialogBuilder(context)
+                .setTitle("${selectedConnections.size} domain(s) selected")
+                .setItems(arrayOf("Select more", "Trust selected", "Block selected", "Clear selection")) { dialog, which ->
+                    when (which) {
+                        0 -> dialog.dismiss()
+                        1 -> {
+                            applyBulkDomainRule(selectedConnections.mapNotNull { it.appOrDnsName?.trim()?.trimEnd('.') }.distinct(), DomainRulesManager.Status.TRUST)
+                            clearSelection()
+                        }
+                        2 -> {
+                            applyBulkDomainRule(selectedConnections.mapNotNull { it.appOrDnsName?.trim()?.trimEnd('.') }.distinct(), DomainRulesManager.Status.BLOCK)
+                            clearSelection()
+                        }
+                        3 -> clearSelection()
+                    }
+                }
+                .show()
+        }
+
+        private fun clearSelection() {
+            selectedDomains.clear()
+            selectionMode = false
+            notifyDataSetChanged()
+        }
+
+        private fun applyBulkDomainRule(domains: List<String>, status: DomainRulesManager.Status) {
+            if (domains.isEmpty()) {
+                showToastUiCentered(context, "No valid domains selected", Toast.LENGTH_SHORT)
+                return
+            }
             lifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 var applied = 0
                 domains.forEach { domain ->
                     try {
-                        DomainRulesManager.changeStatus(
-                            domain,
-                            uid,
-                            "",
-                            DomainRulesManager.DomainType.DOMAIN,
-                            status
-                        )
+                        DomainRulesManager.changeStatus(domain, uid, "", DomainRulesManager.DomainType.DOMAIN, status)
                         applied++
                     } catch (e: Exception) {
                         Logger.e(LOG_TAG_UI, "$TAG bulk domain rule failed for $domain: ${e.message}", e)
                     }
                 }
                 launch(Dispatchers.Main) {
-                    showToastUiCentered(
-                        context,
-                        "$status rule applied to $applied domain(s)",
-                        Toast.LENGTH_LONG
-                    )
+                    showToastUiCentered(context, "$status rule applied to $applied domain(s)", Toast.LENGTH_LONG)
                     refresh()
                 }
             }
