@@ -113,11 +113,21 @@
             android:textSize="@dimen/extra_large_font_text_view"
             android:textStyle="bold" />
 
+        <androidx.appcompat.widget.AppCompatCheckBox
+            android:id="@+id/acd_select_cb"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:layout_marginEnd="4dp"
+            android:visibility="gone"
+            android:contentDescription="Select domain" />
+
         <androidx.appcompat.widget.AppCompatImageView
             android:id="@+id/acd_down_arrow_iv"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_alignParentEnd="true"
+            android:layout_toStartOf="@id/acd_select_cb"
             android:layout_centerVertical="true"
             android:layout_marginStart="5dp"
             android:layout_marginTop="5dp"
